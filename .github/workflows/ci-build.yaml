@@ -765,6 +765,10 @@ jobs:
           INSTALL_K3S_VERSION: ${{ matrix.k3s.version }}+k3s1
         run: |
           set -x
+          # The k3s datastore (sqlite via kine) fsyncs every write. The e2e suite
+          # writes constantly, and a throwaway cluster gains nothing from durability.
+          sudo mkdir -p /var/lib/rancher/k3s/server/db
+          sudo mount -t tmpfs -o size=2g tmpfs /var/lib/rancher/k3s/server/db
           curl -sfL https://get.k3s.io | sh -
           sudo chmod -R a+rw /etc/rancher/k3s
           sudo mkdir -p $HOME/.kube && sudo chown -R "$(whoami)" $HOME/.kube
