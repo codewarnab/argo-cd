@@ -1,5 +1,4 @@
 package gpgkeys
-// e2e cache measurement
 
 import (
 	"fmt"
