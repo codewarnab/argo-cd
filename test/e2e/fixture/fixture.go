@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -695,14 +696,13 @@ func EnsureCleanState(t *testing.T, opts ...TestOption) *TestState {
 	start := time.Now()
 	policy := metav1.DeletePropagationBackground
 
-	deleteNamespaces := func(namespaces []corev1.Namespace, wait bool) error {
-		args := []string{"delete", "ns", "--ignore-not-found=true", fmt.Sprintf("--wait=%t", wait)}
+	deleteNamespaces := func(namespaces []corev1.Namespace) error {
+		// Direct API calls: forking kubectl costs ~1s of process start and discovery per call.
 		for _, namespace := range namespaces {
-			args = append(args, namespace.Name)
-		}
-		_, err := Run("", "kubectl", args...)
-		if err != nil {
-			return err
+			err := KubeClientset.CoreV1().Namespaces().Delete(t.Context(), namespace.Name, metav1.DeleteOptions{PropagationPolicy: &policy})
+			if err != nil && !apierrors.IsNotFound(err) {
+				return err
+			}
 		}
 		return nil
 	}
@@ -826,7 +826,7 @@ func EnsureCleanState(t *testing.T, opts ...TestOption) *TestState {
 				return err
 			}
 			if len(namespaces.Items) > 0 {
-				err = deleteNamespaces(namespaces.Items, false)
+				err = deleteNamespaces(namespaces.Items)
 				if err != nil {
 					return err
 				}
@@ -854,15 +854,13 @@ func EnsureCleanState(t *testing.T, opts ...TestOption) *TestState {
 			return nil
 		},
 		func() error {
-			// delete old CRDs which were created by tests, doesn't seem to have kube api to get items
-			_, err := Run("", "kubectl", "delete", "crd", "-l", TestingLabel+"=true", "--wait=true", "--timeout=60s")
-			return err
+			// delete old CRDs which were created by tests and wait for them to disappear
+			return deleteLabeledAndWait(t, schema.GroupVersionResource{Group: "apiextensions.k8s.io", Version: "v1", Resource: "customresourcedefinitions"}, true)
 		},
 		func() error {
 			// delete old aggregated APIServices created by tests. A dangling APIService
 			// backed by a deleted extension apiserver degrades cluster discovery.
-			_, err := Run("", "kubectl", "delete", "apiservice", "-l", TestingLabel+"=true", "--wait=false")
-			return err
+			return deleteLabeledAndWait(t, schema.GroupVersionResource{Group: "apiregistration.k8s.io", Version: "v1", Resource: "apiservices"}, false)
 		},
 		func() error {
 			err := updateSettingConfigMap(func(cm *corev1.ConfigMap) error {
@@ -1493,4 +1491,51 @@ func SetOIDCConfig(value string) error {
 		delete(cm.Data, "dex.config")
 		return nil
 	})
+}
+
+// deleteLabeledAndWait deletes every cluster-scoped object of gvr carrying the e2e
+// testing label. With wait it blocks until they are gone, like kubectl --wait=true
+// --timeout=60s did.
+func deleteLabeledAndWait(t *testing.T, gvr schema.GroupVersionResource, wait bool) error {
+	t.Helper()
+	client := DynamicClientset.Resource(gvr)
+	selector := metav1.ListOptions{LabelSelector: TestingLabel + "=true"}
+	count := func() (int, error) {
+		list, err := client.List(t.Context(), selector)
+		if err != nil {
+			return 0, err
+		}
+		return len(list.Items), nil
+	}
+	n, err := count()
+	if err != nil || n == 0 {
+		return err
+	}
+	policy := metav1.DeletePropagationBackground
+	if err := client.DeleteCollection(t.Context(), metav1.DeleteOptions{PropagationPolicy: &policy}, selector); err != nil {
+		return err
+	}
+	if !wait {
+		return nil
+	}
+	return waitUntilGone(t, count)
+}
+
+// waitUntilGone polls count until it reports zero, for at most 60 seconds.
+func waitUntilGone(t *testing.T, count func() (int, error)) error {
+	t.Helper()
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		n, err := count()
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("%d labeled objects still present after 60s", n)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
