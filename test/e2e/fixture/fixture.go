@@ -175,6 +175,10 @@ func getKubeConfig(configPath string, overrides clientcmd.ConfigOverrides) *rest
 
 	restConfig, err := clientConfig.ClientConfig()
 	errors.CheckError(err)
+	// client-go defaults to 5 QPS / burst 10. Every test's cleanup issues ~15 calls
+	// in parallel, so the default limiter added seconds of client-side waiting per test.
+	restConfig.QPS = 100
+	restConfig.Burst = 200
 	return restConfig
 }
 
