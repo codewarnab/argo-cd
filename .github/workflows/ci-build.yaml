@@ -788,8 +788,12 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: ${{ runner.os }}-go-build-v2-${{ env.GOLANG_VERSION }}-${{ hashFiles('go.sum', 'gitops-engine/go.sum') }}
+          # Prefer the cache saved by an e2e job: it holds the e2e test binary and the
+          # debug/coverage builds of the binaries, which the build-go cache does not.
+          key: ${{ runner.os }}-go-e2e-build-v1-${{ env.GOLANG_VERSION }}-${{ hashFiles('go.sum', 'gitops-engine/go.sum') }}
           restore-keys: |
+            ${{ runner.os }}-go-e2e-build-v1-${{ env.GOLANG_VERSION }}-${{ hashFiles('go.sum', 'gitops-engine/go.sum') }}
+            ${{ runner.os }}-go-e2e-build-v1-${{ env.GOLANG_VERSION }}-
             ${{ runner.os }}-go-build-v2-${{ env.GOLANG_VERSION }}-
       - name: Add ~/go/bin to PATH
         run: |
@@ -861,7 +865,17 @@ jobs:
             cat rerunreport.txt
           fi
           goreman run stop-all || echo "goreman trouble"
-          sleep 30
+          # The servers write their coverage data on exit; wait for them instead of a fixed 30s.
+          for _ in $(seq 120); do pgrep -f 'dist/argocd' >/dev/null || break; sleep 0.5; done
+      - name: Save go build cache for later e2e runs
+        # One job per push is enough: every shard compiles the same packages.
+        if: ${{ github.event_name == 'push' && matrix.k3s.latest && matrix.shard == 1 && steps.e2e.outcome == 'success' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-e2e-build-v1-${{ env.GOLANG_VERSION }}-${{ hashFiles('go.sum', 'gitops-engine/go.sum') }}-${{ github.run_id }}
       - name: Upload e2e coverage report
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
