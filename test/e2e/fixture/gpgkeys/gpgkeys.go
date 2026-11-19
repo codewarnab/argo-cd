@@ -51,9 +51,9 @@ func DeleteGPGPublicKey(t *testing.T) {
 // can still verify against the old keyring.
 func waitForKeyring(t *testing.T, present bool) {
 	t.Helper()
-	home := fmt.Sprintf("%s/app/config/gpg/keys", fixture.TmpDir())
+	home := fixture.TmpDir() + "/app/config/gpg/keys"
 	require.Eventually(t, func() bool {
-		err := exec.Command("gpg", "--homedir", home, "--batch", "--list-keys", fixture.GpgGoodKeyID).Run()
+		err := exec.CommandContext(t.Context(), "gpg", "--homedir", home, "--batch", "--list-keys", fixture.GpgGoodKeyID).Run()
 		return (err == nil) == present
 	}, 30*time.Second, 100*time.Millisecond, "repo-server keyring did not sync key %s (want present=%v)", fixture.GpgGoodKeyID, present)
 }
