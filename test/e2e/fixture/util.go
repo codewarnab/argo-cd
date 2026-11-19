@@ -1,9 +1,13 @@
 package fixture
 
 import (
+	"fmt"
+	"reflect"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -32,8 +36,17 @@ func DnsFriendly(str string, postfix string) string { //nolint:revive //FIXME(va
 func RunFunctionsInParallelAndCheckErrors(t *testing.T, functions []func() error) {
 	t.Helper()
 	var eg errgroup.Group
+	groupStart := time.Now()
 	for _, function := range functions {
-		eg.Go(function)
+		f := runtime.FuncForPC(reflect.ValueOf(function).Pointer())
+		file, line := f.FileLine(f.Entry())
+		eg.Go(func() error {
+			start := time.Now()
+			err := function()
+			fmt.Printf("E2E-TIMING step %s:%d %.3fs\n", file[strings.LastIndex(file, "/")+1:], line, time.Since(start).Seconds())
+			return err
+		})
 	}
 	require.NoError(t, eg.Wait())
+	fmt.Printf("E2E-TIMING group %.3fs\n", time.Since(groupStart).Seconds())
 }
