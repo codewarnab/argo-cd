@@ -99,7 +99,7 @@ jobs:
       - name: Compute the e2e shard split
         id: shards
         env:
-          SHARD_COUNT: '4'
+          SHARD_COUNT: '8'
         run: |
           set -eu
           # awk rather than `seq -s,`: BSD seq appends a trailing separator and GNU does
