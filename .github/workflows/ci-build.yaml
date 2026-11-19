@@ -764,6 +764,10 @@ jobs:
       - name: Install K3S
         env:
           INSTALL_K3S_VERSION: ${{ matrix.k3s.version }}+k3s1
+          # Embedded etcd instead of the default sqlite/kine datastore. kine does not
+          # serve progress notifications well, so every consistent LIST (and every
+          # label-selected delete) waited ~1s for the watch cache to catch up.
+          INSTALL_K3S_EXEC: --cluster-init
         run: |
           set -x
           # The k3s datastore (sqlite via kine) fsyncs every write. The e2e suite
