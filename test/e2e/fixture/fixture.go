@@ -1040,7 +1040,10 @@ func EnsureCleanState(t *testing.T, opts ...TestOption) *TestState {
 			if err != nil {
 				return err
 			}
-			_, err = Run(repoDirectory(), "git", "commit", "-q", "-m", "initial commit")
+			// The test ID keeps this commit's SHA unique. Two tests starting in the same
+			// second otherwise produce the same SHA, and the repo-server then skips the
+			// fetch and never sees refs (such as tags) the new test adds.
+			_, err = Run(repoDirectory(), "git", "commit", "-q", "-m", "initial commit for "+state.id)
 			if err != nil {
 				return err
 			}
