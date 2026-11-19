@@ -37,7 +37,9 @@ if ! [[ "$shard" =~ ^[0-9]+$ ]] || ! [[ "$count" =~ ^[0-9]+$ ]] || [ "$count" -l
 fi
 
 # `go test -list` emits the matching names followed by a trailing "ok <pkg> <time>" line.
-listed=$(go test -list '.*' "$pkg")
+# -cover matches the build flags hack/test.sh passes to gotestsum, so the test
+# binary compiled here is reused from the build cache instead of compiled twice.
+listed=$(go test -cover -list '.*' "$pkg")
 names=$(echo "$listed" | grep -E '^Test[A-Za-z0-9_]*$' || true)
 
 # A test whose name the filter above rejects (Go identifiers may contain non-ASCII
