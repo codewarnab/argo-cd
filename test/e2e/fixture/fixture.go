@@ -6,6 +6,7 @@ import (
 	stderrors "errors"
 	"fmt"
 	"math"
+	"net/http"
 	"os"
 	"path"
 	"path/filepath"
@@ -180,6 +181,9 @@ func getKubeConfig(configPath string, overrides clientcmd.ConfigOverrides) *rest
 	// in parallel, so the default limiter added seconds of client-side waiting per test.
 	restConfig.QPS = 100
 	restConfig.Burst = 200
+	restConfig.WrapTransport = func(rt http.RoundTripper) http.RoundTripper {
+		return slowRequestLogger{rt}
+	}
 	return restConfig
 }
 
@@ -1538,4 +1542,20 @@ func waitUntilGone(t *testing.T, count func() (int, error)) error {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+// slowRequestLogger prints every Kubernetes API request that takes over 100ms.
+type slowRequestLogger struct{ next http.RoundTripper }
+
+func (l slowRequestLogger) RoundTrip(req *http.Request) (*http.Response, error) {
+	start := time.Now()
+	resp, err := l.next.RoundTrip(req)
+	if d := time.Since(start); d > 100*time.Millisecond {
+		status := 0
+		if resp != nil {
+			status = resp.StatusCode
+		}
+		fmt.Printf("E2E-SLOWREQ %.3fs %s %s %d\n", d.Seconds(), req.Method, req.URL.RequestURI(), status)
+	}
+	return resp, err
 }
