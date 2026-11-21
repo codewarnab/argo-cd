@@ -54,6 +54,7 @@ func (c *Consequences) Expect(e Expectation) *Consequences {
 		}
 		log.Infof("pending: %s", message)
 	}
+	c.dumpTimeoutDiagnostics()
 	c.context.T().Fatal("timeout waiting for: " + message)
 	return c
 }
