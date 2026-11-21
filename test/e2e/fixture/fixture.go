@@ -883,8 +883,8 @@ func EnsureCleanState(t *testing.T, opts ...TestOption) *TestState {
 				WaitForAPIServerLoginIssuer(t, oldIssuer, false)
 			}
 			// The admin login runs here, after the wait, and not in parallel with it.
-			if err = LoginAs(adminUsername); err != nil {
-				return err
+			if loginErr := LoginAs(adminUsername); loginErr != nil {
+				return loginErr
 			}
 			err = updateNotificationsConfigMap(func(cm *corev1.ConfigMap) error {
 				cm.Data = map[string]string{}
