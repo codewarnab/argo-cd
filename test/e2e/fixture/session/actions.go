@@ -126,6 +126,10 @@ func (a *Actions) WithDirectOIDC() *Actions {
 	a.context.T().Logf("Direct OIDC Issuer: %s, ClientID: %s", m.Issuer(), m.Config().ClientID)
 
 	fixture.RestartAPIServer(a.context.T())
+	if fixture.IsLocal() {
+		// The local API server restarts itself on the oidc.config change.
+		fixture.WaitForAPIServerLoginIssuer(a.context.T(), m.Issuer(), true)
+	}
 	return a
 }
 

@@ -3,6 +3,7 @@ package fixture
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	stderrors "errors"
 	"fmt"
 	"math"
@@ -867,11 +868,22 @@ func EnsureCleanState(t *testing.T, opts ...TestOption) *TestState {
 			return deleteLabeledAndWait(t, schema.GroupVersionResource{Group: "apiregistration.k8s.io", Version: "v1", Resource: "apiservices"}, false)
 		},
 		func() error {
+			oldIssuer := ""
 			err := updateSettingConfigMap(func(cm *corev1.ConfigMap) error {
+				oldIssuer = oidcIssuer(cm.Data["oidc.config"])
 				cm.Data = map[string]string{}
 				return nil
 			})
 			if err != nil {
+				return err
+			}
+			if oldIssuer != "" && IsLocal() {
+				// Removing oidc.config makes the API server restart itself. Wait for that
+				// before any request, or it fails with "connection refused".
+				WaitForAPIServerLoginIssuer(t, oldIssuer, false)
+			}
+			// The admin login runs here, after the wait, and not in parallel with it.
+			if err = LoginAs(adminUsername); err != nil {
 				return err
 			}
 			err = updateNotificationsConfigMap(func(cm *corev1.ConfigMap) error {
@@ -892,10 +904,6 @@ func EnsureCleanState(t *testing.T, opts ...TestOption) *TestState {
 				cm.Data = map[string]string{}
 				return nil
 			})
-		},
-		func() error {
-			// We can switch user and as result in previous state we will have non-admin user, this case should be reset
-			return LoginAs(adminUsername)
 		},
 		func() error {
 			// If /tmp/argocd-e2e-env exists restart app controller with no environment variables
@@ -1390,6 +1398,54 @@ func RestartRepoServer(t *testing.T) {
 		// wait longer to avoid error on s390x
 		time.Sleep(5 * time.Second)
 	}
+}
+
+// oidcIssuer returns the issuer from an oidc.config value, or "" when there is none.
+func oidcIssuer(oidcConfig string) string {
+	var cfg struct {
+		Issuer string `json:"issuer"`
+	}
+	if yaml.Unmarshal([]byte(oidcConfig), &cfg) != nil {
+		return ""
+	}
+	return cfg.Issuer
+}
+
+// WaitForAPIServerLoginIssuer waits until the API server answers /auth/login and its
+// redirect does (want=true) or does not (want=false) point at issuer.
+//
+// The API server builds its SSO login handler from the settings it started with. It
+// restarts itself in-process when oidc.config or url in argocd-cm changes. In local mode
+// nothing else signals that restart, so this tells a test that the running server uses
+// the new config. Requests made during the restart fail with "connection refused".
+func WaitForAPIServerLoginIssuer(t *testing.T, issuer string, want bool) {
+	t.Helper()
+	scheme := "https"
+	if IsPlainText() {
+		scheme = "http"
+	}
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // e2e API server uses a self-signed certificate
+		},
+	}
+	loginURL := scheme + "://" + GetApiServerAddress() + common.LoginEndpoint
+	require.Eventually(t, func() bool {
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, loginURL, http.NoBody)
+		if err != nil {
+			return false
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return false
+		}
+		_ = resp.Body.Close()
+		return strings.HasPrefix(resp.Header.Get("Location"), issuer) == want
+	}, 2*time.Minute, 200*time.Millisecond, "API server did not restart with the new OIDC config")
 }
 
 // RestartAPIServer performs a restart of the API server deployemt and waits
